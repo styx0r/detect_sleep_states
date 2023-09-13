@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "detect-sleep-states"
+version = "0.1.0"
+description = ""
+authors = ["Christoph Baldow <christoph.baldow@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pandas = "^2.1.0"
+fastparquet = "^2023.8.0"
+matplotlib = "^3.7.2"
+
+
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.25.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
