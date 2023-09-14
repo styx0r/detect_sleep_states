@@ -65,7 +65,12 @@ def import_data(train_series_path: str = '../data/train_series.parquet', train_e
     train_events['step'] = train_events['step'].astype('uint32')
 
     extract_timestamp_features(train_events)
-
-    return train_series, train_events, mappings
+    merged_df = train_series.merge(train_events[['series_id', 'step', "event", "night"]], how="left",
+                                   left_on=['series_id', 'step'], right_on=['series_id', 'step'])
+    merged_df[["night", "event"]] = merged_df.groupby("series_id")[["night", "event"]].ffill()
+    return merged_df, mappings
 
 ##################################################################################################################
+
+if __name__ == '__main__':
+    merged_df, mappings= import_data()
