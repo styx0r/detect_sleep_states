@@ -36,4 +36,8 @@ tolerances = {'onset': [1.0, 0.8],
 score(sample_submission, sample_submission, tolerances, **column_names)
 
 
-merged_df = train_series.join(train_events, on=['series_id', 'timestamp'])
+merged_df = train_series.merge(train_events, how='outer', on=['series_id', 'timestamp'])
+
+
+# extract time and hour from timestamp
+merged_df[(merged_df['series_id'] == 'fe90110788d2') & merged_df['night'].notna()]
