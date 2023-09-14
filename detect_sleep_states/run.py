@@ -54,3 +54,11 @@ add_mapping(mappings, train_series, 'year')
 train_series['year'] = map_and_convert_type(train_series['year'], mappings['year'], 'uint8')
 
 ######### Transform train_events data to memory efficient representation #########
+train_events = train_events.dropna()
+train_events['night'] = train_events['night'].astype('uint16')
+train_events['series_id'] = map_and_convert_type(train_events['series_id'], mappings['series_id'], 'uint16')
+add_mapping(mappings, train_events, 'event')
+train_events['event'] = map_and_convert_type(train_events['event'], mappings['event'], 'uint8')
+train_events['step'] = train_events['step'].astype('uint32')
+
+extract_timestamp_features(train_events)
