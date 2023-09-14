@@ -34,7 +34,7 @@ def extract_timestamp_features(df: pd.DataFrame, timestamp_col: str = 'timestamp
     def weekday_parallel(chunk):
         tqdm.pandas()
         return chunk[['year', 'month', 'day']].progress_apply(lambda x:  datetime.date(x['year'], x['month'], x['day']).weekday(), axis=1)
-    df['weekday'] = pd.concat(Parallel(n_jobs=-1)(delayed(weekday_parallel)(chunk) for chunk in np.array_split(df[['year', 'month', 'day']], multiprocessing.cpu_count() - 1))).astype('uint8')    
+    df['weekday'] = pd.concat(Parallel(n_jobs=-1)(delayed(weekday_parallel)(chunk) for chunk in np.array_split(df[['year', 'month', 'day']], multiprocessing.cpu_count() - 1))).astype('uint8')
 
 def import_data(train_series_path: str = '../data/train_series.parquet', train_events_path: str = '../data/train_events.csv'):
 
@@ -58,16 +58,21 @@ def import_data(train_series_path: str = '../data/train_series.parquet', train_e
 
     ######### Transform train_events data to memory efficient representation #########
     train_events = train_events.dropna()
-    train_events['night'] = train_events['night'].astype('uint16')
+    train_events['night'] = train_events['night'].astype('int16')
     train_events['series_id'] = map_and_convert_type(train_events['series_id'], mappings['series_id'], 'uint16')
     add_mapping(mappings, train_events, 'event')
-    train_events['event'] = map_and_convert_type(train_events['event'], mappings['event'], 'uint8')
+    train_events['event'] = map_and_convert_type(train_events['event'], mappings['event'], 'int8')
     train_events['step'] = train_events['step'].astype('uint32')
 
     extract_timestamp_features(train_events)
+
     merged_df = train_series.merge(train_events[['series_id', 'step', "event", "night"]], how="left",
                                    left_on=['series_id', 'step'], right_on=['series_id', 'step'])
-    merged_df[["night", "event"]] = merged_df.groupby("series_id")[["night", "event"]].ffill()
+    merged_df[["night", "event"]] = merged_df.groupby("series_id")[["night", "event"]].ffill().fillna(-1)
+
+    merged_df['night'] = merged_df['night'].astype('int16')
+    merged_df['event'] = merged_df['event'].astype('int8')
+
     return merged_df, mappings
 
 ##################################################################################################################
