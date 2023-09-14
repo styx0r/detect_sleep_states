@@ -41,10 +41,10 @@ train_events = pd.read_csv('../data/train_events.csv')
 # mappings storage
 mappings = {}
 
-######### Transform data to memory efficient representation #########
+######### Transform train_series data to memory efficient representation #########
 # series_id mapping
 add_mapping(mappings, train_series, 'series_id')
-train_series['series_id'] = map_and_convert_type(train_series['series_id'], mappings['series_ids'], 'uint16')
+train_series['series_id'] = map_and_convert_type(train_series['series_id'], mappings['series_id'], 'uint16')
 
 train_series['step'] = train_series['step'].astype('uint32')
 
@@ -52,3 +52,5 @@ extract_timestamp_features(train_series)
 
 add_mapping(mappings, train_series, 'year')
 train_series['year'] = map_and_convert_type(train_series['year'], mappings['year'], 'uint8')
+
+######### Transform train_events data to memory efficient representation #########
