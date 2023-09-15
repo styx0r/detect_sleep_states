@@ -20,6 +20,7 @@ def add_mapping(mappings, df: pd.DataFrame, name_col: str):
     mappings[name_col] = (
         unique_mappings.reset_index().set_index(name_col)["index"].to_dict()
     )
+    mappings[f"{name_col}_rev"] = {v: k for k, v in mappings[name_col].items()}
 
 
 def map_and_convert_type(data: pd.Series, mapping_dict: dict, dtype: str):
@@ -148,14 +149,54 @@ def reduce_dataset(
             }
         )
     )
-    data_reduced = data_reduced.reset_index()
     data_reduced.columns = [
         "_".join(col).strip() for col in data_reduced.columns.values
     ]
+    data_reduced = data_reduced.reset_index()
     return data_reduced
 
 
-# harmonize data by 0 padding
+# harmonize data by 0 padding, always starting from weekday 0
+def extend_data_to_length(data: pd.DataFrame, days: int):
+    non_metric_cols = ["series_id", "year", "month", "day", "weekday", "minute"]
+
+    # fill left size, starting with filling the starting day
+    def fill_first_day(data_subset: pd.DataFrame):
+        first_minute = data_subset.minute.iloc[0]
+        if first_minute > 0:
+            dupl_row = data_subset.iloc[[0]].copy()
+            dupl_row.loc[:, ~dupl_row.columns.isin(non_metric_cols)] = 0
+            data_subset = pd.concat(
+                [pd.concat([dupl_row] * first_minute), data_subset], ignore_index=True
+            )
+            data_subset.loc[data_subset.index[:first_minute], "minute"] = range(
+                first_minute
+            )
+        return data_subset
+
+    data = data.groupby("series_id").apply(fill_first_day).reset_index(drop=True)
+
+    # fill right size, starting with filling the final day
+    def fill_last_day(data_subset: pd.DataFrame):
+        last_minute = data_subset.minute.iloc[data_subset.shape[0] - 1]
+        max_minute = 24 * 60 - 1
+        if last_minute < max_minute:
+            dupl_row = data_subset.iloc[[data_subset.shape[0] - 1]].copy()
+            dupl_row.loc[:, ~dupl_row.columns.isin(non_metric_cols)] = 0
+            df_concat = pd.concat([dupl_row] * (max_minute - last_minute))
+            df_concat["minute"] = range(
+                df_concat["minute"].min() + 1,
+                df_concat.shape[0] + df_concat["minute"].min() + 1,
+            )
+            data_subset = pd.concat(
+                [data_subset, df_concat],
+                ignore_index=True,
+            )
+        return data_subset
+
+    data = data.groupby("series_id").apply(fill_last_day).reset_index(drop=True)
+
+    # fill in the days from weekday 0
 
 
 #############################################################################################################################################################
