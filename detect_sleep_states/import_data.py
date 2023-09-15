@@ -8,7 +8,9 @@ import multiprocessing
 import datetime
 
 from tqdm import tqdm
+
 tqdm.pandas()
+
 
 ######################################### Data Import #######################################################################################################
 
@@ -16,15 +18,18 @@ def add_mapping(mappings, df: pd.DataFrame, name_col: str):
     unique_mappings = pd.DataFrame({name_col: sorted(df[name_col].unique())})
     mappings[name_col] = unique_mappings.reset_index().set_index(name_col)['index'].to_dict()
 
+
 def map_and_convert_type(data: pd.Series, mapping_dict: dict, dtype: str):
     return data.map(mapping_dict).astype(dtype)
 
-def extract_timestamp_features(df: pd.DataFrame, timestamp_col: str = 'timestamp', drop_timestamp_col: bool = True):
-    df['seconds']=df[timestamp_col].str[11:13].astype('uint32') * 60 * 60 + df[timestamp_col].str[14:16].astype('uint32') * 60 + df[timestamp_col].str[17:19].astype('uint32')
-    df['day']=df[timestamp_col].str[8:10].astype('uint8')
-    df['month']=df[timestamp_col].str[5:7].astype('uint8')
 
-    df['year']=df[timestamp_col].str[:4].astype('uint16')
+def extract_timestamp_features(df: pd.DataFrame, timestamp_col: str = 'timestamp', drop_timestamp_col: bool = True):
+    df['seconds'] = df[timestamp_col].str[11:13].astype('uint32') * 60 * 60 + df[timestamp_col].str[14:16].astype(
+        'uint32') * 60 + df[timestamp_col].str[17:19].astype('uint32')
+    df['day'] = df[timestamp_col].str[8:10].astype('uint8')
+    df['month'] = df[timestamp_col].str[5:7].astype('uint8')
+
+    df['year'] = df[timestamp_col].str[:4].astype('uint16')
 
     if drop_timestamp_col:
         # drop timestamp and free memory
@@ -33,11 +38,16 @@ def extract_timestamp_features(df: pd.DataFrame, timestamp_col: str = 'timestamp
 
     def weekday_parallel(chunk):
         tqdm.pandas()
-        return chunk[['year', 'month', 'day']].progress_apply(lambda x:  datetime.date(x['year'], x['month'], x['day']).weekday(), axis=1)
-    df['weekday'] = pd.concat(Parallel(n_jobs=-1)(delayed(weekday_parallel)(chunk) for chunk in np.array_split(df[['year', 'month', 'day']], multiprocessing.cpu_count() - 1))).astype('uint8')
+        return chunk[['year', 'month', 'day']].progress_apply(
+            lambda x: datetime.date(x['year'], x['month'], x['day']).weekday(), axis=1)
 
-def import_data(train_series_path: str = '../data/train_series.parquet', train_events_path: str = '../data/train_events.csv'):
+    df['weekday'] = pd.concat(Parallel(n_jobs=-1)(delayed(weekday_parallel)(chunk) for chunk in
+                                                  np.array_split(df[['year', 'month', 'day']],
+                                                                 multiprocessing.cpu_count() - 1))).astype('uint8')
 
+
+def import_data(train_series_path: str = '../data/train_series.parquet',
+                train_events_path: str = '../data/train_events.csv'):
     train_series = pd.read_parquet(train_series_path)
     train_events = pd.read_csv(train_events_path)
 
@@ -68,14 +78,16 @@ def import_data(train_series_path: str = '../data/train_series.parquet', train_e
 
     merged_df = train_series.merge(train_events[['series_id', 'step', "event", "night"]], how="left",
                                    left_on=['series_id', 'step'], right_on=['series_id', 'step'])
-    merged_df[["night", "event"]] = merged_df.groupby("series_id")[["night", "event"]].ffill().fillna(-1)
+    merged_df[["night", "event"]] = merged_df.groupby("series_id")[["night", "event"]].ffill().fillna(
+        {"night": 0, "event": mappings["event"]["wakeup"]})
 
     merged_df['night'] = merged_df['night'].astype('int16')
     merged_df['event'] = merged_df['event'].astype('int8')
 
     return merged_df, mappings
 
+
 ##################################################################################################################
 
 if __name__ == '__main__':
-    merged_df, mappings= import_data()
+    merged_df, mappings = import_data()
