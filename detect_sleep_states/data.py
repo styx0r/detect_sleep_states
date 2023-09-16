@@ -5,7 +5,7 @@ import gc
 from joblib import Parallel, delayed
 import multiprocessing
 
-import datetime
+from datetime import datetime, timedelta, date
 
 from tqdm import tqdm
 
@@ -49,7 +49,7 @@ def extract_timestamp_features(
     def weekday_parallel(chunk):
         tqdm.pandas()
         return chunk[["year", "month", "day"]].progress_apply(
-            lambda x: datetime.date(x["year"], x["month"], x["day"]).weekday(), axis=1
+            lambda x: date(x["year"], x["month"], x["day"]).weekday(), axis=1
         )
 
     df["weekday"] = pd.concat(
@@ -157,7 +157,8 @@ def reduce_dataset(
 
 
 # harmonize data by 0 padding, always starting from weekday 0
-def extend_data_to_length(data: pd.DataFrame, days: int):
+def extend_data_to_length(data: pd.DataFrame):
+    replication_factor = 60 * 24
     non_metric_cols = ["series_id", "year", "month", "day", "weekday", "minute"]
 
     # fill left size, starting with filling the starting day
@@ -179,14 +180,16 @@ def extend_data_to_length(data: pd.DataFrame, days: int):
     # fill right size, starting with filling the final day
     def fill_last_day(data_subset: pd.DataFrame):
         last_minute = data_subset.minute.iloc[data_subset.shape[0] - 1]
-        max_minute = 24 * 60 - 1
+        max_minute = replication_factor - 1
         if last_minute < max_minute:
             dupl_row = data_subset.iloc[[data_subset.shape[0] - 1]].copy()
             dupl_row.loc[:, ~dupl_row.columns.isin(non_metric_cols)] = 0
             df_concat = pd.concat([dupl_row] * (max_minute - last_minute))
-            df_concat["minute"] = range(
-                df_concat["minute"].min() + 1,
-                df_concat.shape[0] + df_concat["minute"].min() + 1,
+            df_concat["minute"] = np.uint16(
+                range(
+                    df_concat["minute"].min() + 1,
+                    df_concat.shape[0] + df_concat["minute"].min() + 1,
+                )
             )
             data_subset = pd.concat(
                 [data_subset, df_concat],
@@ -197,6 +200,86 @@ def extend_data_to_length(data: pd.DataFrame, days: int):
     data = data.groupby("series_id").apply(fill_last_day).reset_index(drop=True)
 
     # fill in the days from weekday 0
+
+    def date_before_after(date_data: pd.Series, before: bool = True):
+        date_data = date_data.astype("uint16")
+        date_data["year"] = mappings["year_rev"][date_data["year"]]
+        actual_date = datetime(**date_data)
+        if before:
+            modified_date = actual_date - timedelta(days=1)
+        else:
+            modified_date = actual_date + timedelta(days=1)
+        return pd.Series(
+            {
+                "year": mappings["year"][modified_date.year],
+                "month": modified_date.month,
+                "day": modified_date.day,
+                "weekday": modified_date.weekday(),
+            }
+        )
+
+    def add_days(data_subset: pd.DataFrame, days=1, before: bool = True):
+        dupl_row = data_subset.iloc[[0 if before else data_subset.shape[0] - 1]].copy()
+        dupl_row.loc[:, ~dupl_row.columns.isin(non_metric_cols)] = 0
+
+        actual_day = dupl_row.iloc[0][["year", "month", "day"]]
+
+        new_day_data = pd.concat([dupl_row] * replication_factor * days).reset_index(
+            drop=True
+        )
+        new_day_data.loc[:, "minute"] = list(range(replication_factor)) * days
+
+        days_i = list(range(days))
+        if before:
+            days_i.reverse()
+        for i in days_i:
+            actual_day = date_before_after(
+                actual_day.drop("weekday")
+                if "weekday" in actual_day.index
+                else actual_day,
+                before,
+            )
+            for col, value in actual_day.items():
+                new_day_data.loc[
+                    (i * replication_factor) : ((i + 1) * replication_factor - 1),
+                    [col],
+                ] = value
+
+        data_subset = pd.concat(
+            [new_day_data, data_subset] if before else [data_subset, new_day_data],
+            ignore_index=True,
+        )
+        return data_subset
+
+    def fill_to_weekday_0(data_subset: pd.DataFrame):
+        while data_subset["weekday"].iloc[0] > 0:
+            data_subset = add_days(data_subset, days=data_subset["weekday"].iloc[0])
+        return data_subset
+
+    def fill_to_n_days(data_subset: pd.DataFrame, n_days=90):
+        print("next")
+        days = int(data_subset.shape[0] / replication_factor)
+        if days < n_days:
+            data_subset = add_days(data_subset, n_days - days, False)
+        return data_subset
+
+    data = data.groupby("series_id").apply(fill_to_weekday_0).reset_index(drop=True)
+
+    max_days = int(
+        data.groupby("series_id").apply(lambda x: x.shape[0] / replication_factor).max()
+    )
+    data = (
+        data.groupby("series_id")
+        .apply(
+            lambda d: fill_to_n_days(
+                d,
+                max_days,
+            )
+        )
+        .reset_index(drop=True)
+    )
+
+    return data
 
 
 #############################################################################################################################################################
