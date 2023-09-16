@@ -15,8 +15,13 @@ tqdm.pandas()
 ######################################### Data Import #######################################################################################################
 
 
-def add_mapping(mappings, df: pd.DataFrame, name_col: str):
-    unique_mappings = pd.DataFrame({name_col: sorted(df[name_col].unique())})
+def add_mapping(mappings, df: pd.DataFrame, name_col: str, expand: bool = False):
+    unique_values = sorted(df[name_col].unique())
+    if expand:
+        unique_values = (
+            [min(unique_values) - 1] + unique_values + [max(unique_values) + 1]
+        )
+    unique_mappings = pd.DataFrame({name_col: unique_values})
     mappings[name_col] = (
         unique_mappings.reset_index().set_index(name_col)["index"].to_dict()
     )
@@ -83,7 +88,7 @@ def import_data(
 
     extract_timestamp_features(train_series)
 
-    add_mapping(mappings, train_series, "year")
+    add_mapping(mappings, train_series, "year", expand=True)
     train_series["year"] = map_and_convert_type(
         train_series["year"], mappings["year"], "uint8"
     )
@@ -157,7 +162,7 @@ def reduce_dataset(
 
 
 # harmonize data by 0 padding, always starting from weekday 0
-def extend_data_to_length(data: pd.DataFrame):
+def extend_data_to_length(data: pd.DataFrame, mappings: dict):
     replication_factor = 60 * 24
     non_metric_cols = ["series_id", "year", "month", "day", "weekday", "minute"]
 
@@ -200,7 +205,6 @@ def extend_data_to_length(data: pd.DataFrame):
     data = data.groupby("series_id").apply(fill_last_day).reset_index(drop=True)
 
     # fill in the days from weekday 0
-
     def date_before_after(date_data: pd.Series, before: bool = True):
         date_data = date_data.astype("uint16")
         date_data["year"] = mappings["year_rev"][date_data["year"]]
@@ -227,7 +231,9 @@ def extend_data_to_length(data: pd.DataFrame):
         new_day_data = pd.concat([dupl_row] * replication_factor * days).reset_index(
             drop=True
         )
-        new_day_data.loc[:, "minute"] = list(range(replication_factor)) * days
+        new_day_data.loc[:, "minute"] = np.uint16(
+            list(range(replication_factor)) * days
+        )
 
         days_i = list(range(days))
         if before:
@@ -257,7 +263,6 @@ def extend_data_to_length(data: pd.DataFrame):
         return data_subset
 
     def fill_to_n_days(data_subset: pd.DataFrame, n_days=90):
-        print("next")
         days = int(data_subset.shape[0] / replication_factor)
         if days < n_days:
             data_subset = add_days(data_subset, n_days - days, False)
@@ -268,15 +273,13 @@ def extend_data_to_length(data: pd.DataFrame):
     max_days = int(
         data.groupby("series_id").apply(lambda x: x.shape[0] / replication_factor).max()
     )
-    data = (
-        data.groupby("series_id")
-        .apply(
-            lambda d: fill_to_n_days(
-                d,
-                max_days,
-            )
+    chunks = [
+        data[data.series_id == series_id] for series_id in data.series_id.unique()
+    ]
+    data = pd.concat(
+        Parallel(n_jobs=-1)(
+            delayed(fill_to_n_days)(chunk, max_days) for chunk in chunks
         )
-        .reset_index(drop=True)
     )
 
     return data
