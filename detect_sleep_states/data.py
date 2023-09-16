@@ -149,6 +149,7 @@ def reduce_dataset(
         .groupby(reduction_grouping)
         .agg(
             {
+                "event": ["mean"],
                 "enmo": ["mean", "var", "max", "min"],
                 "anglez": ["mean", "var", "max", "min"],
             }
@@ -158,6 +159,8 @@ def reduce_dataset(
         "_".join(col).strip() for col in data_reduced.columns.values
     ]
     data_reduced = data_reduced.reset_index()
+    data_reduced["event"] = np.uint8(data_reduced["event_mean"] > 0.5)
+    data_reduced.drop("event_mean", axis=1, inplace=True)
     return data_reduced
 
 

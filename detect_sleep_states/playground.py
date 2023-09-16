@@ -7,20 +7,9 @@ import matplotlib as plt
 
 from data import import_data, reduce_dataset, extend_data_to_length
 
-data, mappings = import_data()
-data = reduce_dataset(data)
-data = extend_data_to_length(data)
-
-
-# fill with ending zeros
-
-
-# fillwith zero days
-
-
-# minutes
-# adapt year month and day
-
+data_full, mappings = import_data()
+data = reduce_dataset(data_full.copy())
+data = extend_data_to_length(data, mappings)
 
 # Some plotting
 
