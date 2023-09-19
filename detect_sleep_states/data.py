@@ -70,7 +70,7 @@ def extract_timestamp_features(
 def import_data(
     train_series_path: str = "../data/train_series.parquet",
     train_events_path: str = "../data/train_events.csv",
-):
+) -> pd.DataFrame | dict:
     train_series = pd.read_parquet(train_series_path)
     train_events = pd.read_csv(train_events_path)
 
@@ -143,7 +143,7 @@ def reduce_dataset(
         "minute",
     ],
     drop_cols: list[str] = ["second"],
-):
+) -> pd.DataFrame:
     data_reduced = (
         data.drop(drop_cols, axis=1)
         .groupby(reduction_grouping)
@@ -165,9 +165,42 @@ def reduce_dataset(
 
 
 # harmonize data by 0 padding, always starting from weekday 0
-def extend_data_to_length(data: pd.DataFrame, mappings: dict):
+def extend_data_to_length(data: pd.DataFrame, mappings: dict) -> pd.DataFrame:
     replication_factor = 60 * 24
     non_metric_cols = ["series_id", "year", "month", "day", "weekday", "minute"]
+
+    # filling missing values
+    def fill_missing_values(data_subset: pd.DataFrame):
+        data_subset = data_subset.sort_values(["year", "month", "day", "minute"])
+
+        missing_values = pd.DataFrame()
+        for i in range(data_subset.shape[0] - 1):
+            minute = data_subset.minute.iloc[i]
+            minute_next = data_subset.minute.iloc[i + 1]
+            if (minute + 1) % replication_factor != minute_next:
+                minute_next
+
+                dupl_row = data_subset.iloc[[i]].copy()
+                dupl_row.loc[:, ~dupl_row.columns.isin(non_metric_cols)] = 0
+                add_minutes = pd.concat([dupl_row] * (minute_next - minute - 1))
+                add_minutes["minute"] = range(minute + 1, minute_next)
+                missing_values = pd.concat(
+                    [add_minutes, missing_values], ignore_index=True
+                )
+
+        data_subset = pd.concat([missing_values, data_subset], ignore_index=True)
+        data_subset = data_subset.sort_values(["year", "month", "day", "minute"])
+
+        return data_subset
+
+    chunks = [
+        data[data.series_id == series_id] for series_id in data.series_id.unique()
+    ]
+    data = pd.concat(
+        Parallel(n_jobs=-1)(delayed(fill_missing_values)(chunk) for chunk in chunks)
+    ).reset_index(drop=True)
+
+    # data = data.groupby("series_id").apply(fill_missing_values).reset_index(drop=True)
 
     # fill left size, starting with filling the starting day
     def fill_first_day(data_subset: pd.DataFrame):
