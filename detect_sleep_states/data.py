@@ -75,9 +75,15 @@ def import_data(
     train_series = pd.read_parquet(train_series_path)
     train_events = pd.read_csv(train_events_path)
 
+    ## TODO: PROBLEM: many NaNs in train_events -> we need to drop values for nan nights in train_series to improve training data set
+
     # filter series_ids which do not fullfill the minimum coverage to reduce noisyness
     nr_train_values_per_day = (
-        train_series.groupby("series_id").apply(lambda x: x.shape[0]) / 12 / 60 / 24
+        train_series.groupby("series_id")["step"].apply(lambda x: x.max() - x.min())
+        * 5
+        / 60
+        / 60
+        / 24
     )
     nr_train_events = train_events.groupby("series_id").apply(lambda x: x.shape[0])
     joined_data = pd.DataFrame(
