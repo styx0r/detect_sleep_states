@@ -70,9 +70,31 @@ def extract_timestamp_features(
 def import_data(
     train_series_path: str = "../data/train_series.parquet",
     train_events_path: str = "../data/train_events.csv",
+    minimum_coverage: float = 0.9,
 ) -> pd.DataFrame | dict:
     train_series = pd.read_parquet(train_series_path)
     train_events = pd.read_csv(train_events_path)
+
+    # filter series_ids which do not fullfill the minimum coverage to reduce noisyness
+    nr_train_values_per_day = (
+        train_series.groupby("series_id").apply(lambda x: x.shape[0]) / 12 / 60 / 24
+    )
+    nr_train_events = train_events.groupby("series_id").apply(lambda x: x.shape[0])
+    joined_data = pd.DataFrame(
+        {"nr_train_values_per_day": nr_train_values_per_day}
+    ).join(pd.DataFrame({"nr_train_events": (nr_train_events / 2)}))
+    coverage = (
+        joined_data.nr_train_values_per_day - joined_data.nr_train_events
+    ) / joined_data.nr_train_values_per_day
+    series_ids_with_less_coverage = coverage.index[coverage > (1.0 - minimum_coverage)]
+
+    if series_ids_with_less_coverage.shape[0]:
+        train_series = train_series[
+            (~train_series.series_id.isin(series_ids_with_less_coverage))
+        ].reset_index(drop=True)
+        train_events = train_events[
+            (~train_events.series_id.isin(series_ids_with_less_coverage))
+        ].reset_index(drop=True)
 
     # mappings storage
     mappings = {}
