@@ -67,15 +67,166 @@ def extract_timestamp_features(
     ).astype("uint8")
 
 
+def fill_na_values(
+    events: pd.DataFrame,
+    sphere_of_influence_steps_wakeup: float,
+    sphere_of_influence_steps_onset: float,
+):
+    events.loc[:, "former_nan"] = events.step.isna()
+    soi = pd.Series(
+        {
+            "wakeup": sphere_of_influence_steps_wakeup,
+            "onset": sphere_of_influence_steps_onset,
+        }
+    )
+
+    # Identify consecutive NaN rows
+    events.loc[:, "nan_groups"] = (
+        (
+            (events["step"].isna() & events["step"].shift(1).notna())
+            | (events["step"].notna() & events["step"].shift(1).isna())
+        )
+        .astype(int)
+        .cumsum()
+    )
+
+    # For the first NaN row in each group, set the 'step' value to the 'step' of the row before + 2160
+    mask_first_nan = ~events["nan_groups"].duplicated(keep="first") & (
+        events["step"].isna()
+    )
+    events.loc[mask_first_nan, "step"] = (
+        events["step"].shift(1)[mask_first_nan].to_numpy()
+        + soi.loc[events["event"].shift(1)[mask_first_nan]].to_numpy()
+    )
+    events.loc[mask_first_nan, "timestamp"] = (
+        events[["timestamp", "event"]]
+        .shift(1)[mask_first_nan]
+        .apply(
+            lambda r: str(
+                pd.to_datetime(r["timestamp"])
+                + pd.Timedelta(seconds=5 * soi[r["event"]])
+            ),
+            axis=1,
+        )
+    )
+
+    # For the second NaN row in each group, set the 'step' value to the 'step' of the row after - 2160
+    mask_second_nan = ~events["nan_groups"].duplicated(keep="last") & (
+        events["step"].isna()
+    )
+    events.loc[mask_second_nan, "step"] = (
+        events["step"].shift(-1)[mask_second_nan].to_numpy()
+        - soi.loc[events["event"].shift(-1)[mask_second_nan]].to_numpy()
+    )
+    events.loc[mask_second_nan, "timestamp"] = (
+        events[["timestamp", "event"]]
+        .shift(-1)[mask_second_nan]
+        .apply(
+            lambda r: str(
+                pd.to_datetime(r["timestamp"])
+                - pd.Timedelta(seconds=5 * soi[r["event"]])
+            ),
+            axis=1,
+        )
+    )
+
+    # Remove any additional NaN rows in the group
+    to_drop = events.loc[
+        events["former_nan"] & ~mask_first_nan & ~mask_second_nan
+    ].index
+    events.drop(to_drop, inplace=True)
+
+    # Drop the helper column
+    events.drop("nan_groups", axis=1, inplace=True)
+
+    return events
+
+
 def import_data(
     train_series_path: str = "../data/train_series.parquet",
     train_events_path: str = "../data/train_events.csv",
+    sphere_of_influence_steps_onset: float = 2160.0,  # 3 hours
+    sphere_of_influence_steps_wakeup: float = 2160.0,  # 3 hours
     minimum_coverage: float = 0.9,
 ) -> pd.DataFrame | dict:
     train_series = pd.read_parquet(train_series_path)
     train_events = pd.read_csv(train_events_path)
 
-    ## TODO: PROBLEM: many NaNs in train_events -> we need to drop values for nan nights in train_series to improve training data set
+    ##################### Cleanup #####################
+
+    # remove train_series data after last event non na events + sphere of influence
+    max_timestamps = (
+        train_events[train_events["step"].notna()]
+        .groupby("series_id")
+        .apply(lambda x: x.iloc[(x.shape[0] - 1)])
+    )
+    min_timestamps = (
+        train_events[train_events["step"].notna()]
+        .groupby("series_id")
+        .apply(lambda x: x.iloc[0])
+    )
+    train_series = train_series[
+        train_series.series_id.isin(
+            pd.concat([max_timestamps.series_id, min_timestamps.series_id]).unique()
+        )
+    ].reset_index(drop=True)
+    train_events = train_events[
+        train_events.series_id.isin(
+            pd.concat([max_timestamps.series_id, min_timestamps.series_id]).unique()
+        )
+    ].reset_index(drop=True)
+
+    train_events = (
+        train_events.groupby("series_id")
+        .apply(
+            lambda e: e[
+                (
+                    e.night
+                    <= (
+                        max_timestamps["night"][
+                            max_timestamps.series_id == e.name
+                        ].iloc[0]
+                    )
+                )
+                & (
+                    e.night
+                    >= (
+                        min_timestamps["night"][
+                            min_timestamps.series_id == e.name
+                        ].iloc[0]
+                    )
+                )
+            ]
+        )
+        .reset_index(drop=True)
+    )
+
+    drop_indices = (
+        train_series.groupby("series_id")
+        .apply(
+            lambda s: s.step
+            <= (
+                max_timestamps["step"][max_timestamps.series_id == s.name].iloc[0]
+                + sphere_of_influence_steps_wakeup
+            )
+        )
+        .reset_index(drop=True)
+    )
+    train_series.drop(drop_indices[~drop_indices].index.to_list(), inplace=True)
+    train_series.reset_index(drop=True)
+
+    # fill in NAs inbetween
+    train_events = (
+        train_events.groupby("series_id")
+        .apply(
+            lambda s: fill_na_values(
+                s, sphere_of_influence_steps_wakeup, sphere_of_influence_steps_onset
+            )
+        )
+        .reset_index(drop=True)
+    )
+
+    ###################################################
 
     # filter series_ids which do not fullfill the minimum coverage to reduce noisyness
     nr_train_values_per_day = (
