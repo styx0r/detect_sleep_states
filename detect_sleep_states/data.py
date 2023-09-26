@@ -142,6 +142,22 @@ def fill_na_values(
     return events
 
 
+def adapt_series_to_na_fill(series, events):
+    groups = (
+        (events.former_nan & (~events.former_nan).shift(1))
+        | (~events.former_nan & (events.former_nan).shift(1))
+    ).cumsum()[events.former_nan]
+    for g in groups.unique():
+        g_events = events.loc[groups[groups == g].index]
+        series.loc[
+            series["step"].between(
+                g_events.step.iloc[0], g_events.step.iloc[g_events.shape[0] - 1]
+            ),
+            ["enmo", "anglez"],
+        ] = 0
+    return series
+
+
 def import_data(
     train_series_path: str = "../data/train_series.parquet",
     train_events_path: str = "../data/train_events.csv",
@@ -221,6 +237,15 @@ def import_data(
         .apply(
             lambda s: fill_na_values(
                 s, sphere_of_influence_steps_wakeup, sphere_of_influence_steps_onset
+            )
+        )
+        .reset_index(drop=True)
+    )
+    train_series = (
+        train_series.groupby("series_id")
+        .apply(
+            lambda s: adapt_series_to_na_fill(
+                s, train_events[train_events.series_id == s.name]
             )
         )
         .reset_index(drop=True)
