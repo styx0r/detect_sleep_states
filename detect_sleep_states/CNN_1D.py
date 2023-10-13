@@ -7,7 +7,13 @@ import tensorflow as tf
 
 from sklearn.model_selection import train_test_split
 
+from data import import_data, reduce_dataset, extend_data_to_length
 
+data_full, mappings = import_data()
+data = reduce_dataset(data_full.copy())
+data = extend_data_to_length(data, mappings)
+
+data.to_parquet("../data/data_preprocessed.parquet")
 data = pd.read_parquet("../data/data_preprocessed.parquet")
 
 # CNN with padding
@@ -35,9 +41,8 @@ model.add(
         32, 30, activation="relu", input_shape=(x_train.shape[1], x_train.shape[2])
     )
 )
-model.add(tf.keras.layers.MaxPooling1D(30))
-model.add(tf.keras.layers.Conv1D(64, 30, activation="relu"))
 # model.add(tf.keras.layers.MaxPooling1D(30))
+model.add(tf.keras.layers.Conv1D(64, 30, activation="relu"))
 model.add(tf.keras.layers.Dropout(0.5))
 model.add(tf.keras.layers.Flatten())
 model.add(tf.keras.layers.Dense(100, activation="relu"))
@@ -49,6 +54,7 @@ model.compile(
     # optimizer=optimizers.Adam(0.1, weight_decay=0.001),
     optimizer=tf.keras.optimizers.legacy.Adam(decay=0.005),
     loss=tf.keras.losses.BinaryCrossentropy(from_logits=False),
+    # metrics=["MAE"],
     metrics=["MSE", "MAE"],
 )
 model.summary()
