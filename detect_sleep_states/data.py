@@ -161,6 +161,7 @@ def adapt_series_to_na_fill(series, events):
 def import_data(
     train_series_path: str = "../data/train_series.parquet",
     train_events_path: str = "../data/train_events.csv",
+    event_na_cleanup: bool = True,
     sphere_of_influence_steps_onset: float = 2160.0,  # 3 hours
     sphere_of_influence_steps_wakeup: float = 2160.0,  # 3 hours
     minimum_coverage: float = 0.9,
@@ -170,113 +171,116 @@ def import_data(
 
     ##################### Cleanup #####################
 
-    # remove train_series data after last event non na events + sphere of influence
-    max_timestamps = (
-        train_events[train_events["step"].notna()]
-        .groupby("series_id")
-        .apply(lambda x: x.iloc[(x.shape[0] - 1)])
-    )
-    min_timestamps = (
-        train_events[train_events["step"].notna()]
-        .groupby("series_id")
-        .apply(lambda x: x.iloc[0])
-    )
-    train_series = train_series[
-        train_series.series_id.isin(
-            pd.concat([max_timestamps.series_id, min_timestamps.series_id]).unique()
+    if event_na_cleanup:
+        # remove train_series data after last event non na events + sphere of influence
+        max_timestamps = (
+            train_events[train_events["step"].notna()]
+            .groupby("series_id")
+            .apply(lambda x: x.iloc[(x.shape[0] - 1)])
         )
-    ].reset_index(drop=True)
-    train_events = train_events[
-        train_events.series_id.isin(
-            pd.concat([max_timestamps.series_id, min_timestamps.series_id]).unique()
+        min_timestamps = (
+            train_events[train_events["step"].notna()]
+            .groupby("series_id")
+            .apply(lambda x: x.iloc[0])
         )
-    ].reset_index(drop=True)
-
-    train_events = (
-        train_events.groupby("series_id")
-        .apply(
-            lambda e: e[
-                (
-                    e.night
-                    <= (
-                        max_timestamps["night"][
-                            max_timestamps.series_id == e.name
-                        ].iloc[0]
-                    )
-                )
-                & (
-                    e.night
-                    >= (
-                        min_timestamps["night"][
-                            min_timestamps.series_id == e.name
-                        ].iloc[0]
-                    )
-                )
-            ]
-        )
-        .reset_index(drop=True)
-    )
-
-    drop_indices = (
-        train_series.groupby("series_id")
-        .apply(
-            lambda s: s.step
-            <= (
-                max_timestamps["step"][max_timestamps.series_id == s.name].iloc[0]
-                + sphere_of_influence_steps_wakeup
-            )
-        )
-        .reset_index(drop=True)
-    )
-    train_series.drop(drop_indices[~drop_indices].index.to_list(), inplace=True)
-    train_series.reset_index(drop=True)
-
-    # fill in NAs inbetween
-    train_events = (
-        train_events.groupby("series_id")
-        .apply(
-            lambda s: fill_na_values(
-                s, sphere_of_influence_steps_wakeup, sphere_of_influence_steps_onset
-            )
-        )
-        .reset_index(drop=True)
-    )
-    train_series = (
-        train_series.groupby("series_id")
-        .apply(
-            lambda s: adapt_series_to_na_fill(
-                s, train_events[train_events.series_id == s.name]
-            )
-        )
-        .reset_index(drop=True)
-    )
-
-    ###################################################
-
-    # filter series_ids which do not fullfill the minimum coverage to reduce noisyness
-    nr_train_values_per_day = (
-        train_series.groupby("series_id")["step"].apply(lambda x: x.max() - x.min())
-        * 5
-        / 60
-        / 60
-        / 24
-    )
-    nr_train_events = train_events.groupby("series_id").apply(lambda x: x.shape[0])
-    joined_data = pd.DataFrame(
-        {"nr_train_values_per_day": nr_train_values_per_day}
-    ).join(pd.DataFrame({"nr_train_events": (nr_train_events / 2)}))
-    coverage = (
-        joined_data.nr_train_values_per_day - joined_data.nr_train_events
-    ) / joined_data.nr_train_values_per_day
-    series_ids_with_less_coverage = coverage.index[coverage > (1.0 - minimum_coverage)]
-
-    if series_ids_with_less_coverage.shape[0]:
         train_series = train_series[
-            (~train_series.series_id.isin(series_ids_with_less_coverage))
+            train_series.series_id.isin(
+                pd.concat([max_timestamps.series_id, min_timestamps.series_id]).unique()
+            )
         ].reset_index(drop=True)
         train_events = train_events[
-            (~train_events.series_id.isin(series_ids_with_less_coverage))
+            train_events.series_id.isin(
+                pd.concat([max_timestamps.series_id, min_timestamps.series_id]).unique()
+            )
         ].reset_index(drop=True)
+
+        train_events = (
+            train_events.groupby("series_id")
+            .apply(
+                lambda e: e[
+                    (
+                        e.night
+                        <= (
+                            max_timestamps["night"][
+                                max_timestamps.series_id == e.name
+                            ].iloc[0]
+                        )
+                    )
+                    & (
+                        e.night
+                        >= (
+                            min_timestamps["night"][
+                                min_timestamps.series_id == e.name
+                            ].iloc[0]
+                        )
+                    )
+                ]
+            )
+            .reset_index(drop=True)
+        )
+
+        drop_indices = (
+            train_series.groupby("series_id")
+            .apply(
+                lambda s: s.step
+                <= (
+                    max_timestamps["step"][max_timestamps.series_id == s.name].iloc[0]
+                    + sphere_of_influence_steps_wakeup
+                )
+            )
+            .reset_index(drop=True)
+        )
+        train_series.drop(drop_indices[~drop_indices].index.to_list(), inplace=True)
+        train_series.reset_index(drop=True)
+
+        # fill in NAs inbetween
+        train_events = (
+            train_events.groupby("series_id")
+            .apply(
+                lambda s: fill_na_values(
+                    s, sphere_of_influence_steps_wakeup, sphere_of_influence_steps_onset
+                )
+            )
+            .reset_index(drop=True)
+        )
+        train_series = (
+            train_series.groupby("series_id")
+            .apply(
+                lambda s: adapt_series_to_na_fill(
+                    s, train_events[train_events.series_id == s.name]
+                )
+            )
+            .reset_index(drop=True)
+        )
+
+        ###################################################
+
+        # filter series_ids which do not fullfill the minimum coverage to reduce noisyness
+        nr_train_values_per_day = (
+            train_series.groupby("series_id")["step"].apply(lambda x: x.max() - x.min())
+            * 5
+            / 60
+            / 60
+            / 24
+        )
+        nr_train_events = train_events.groupby("series_id").apply(lambda x: x.shape[0])
+        joined_data = pd.DataFrame(
+            {"nr_train_values_per_day": nr_train_values_per_day}
+        ).join(pd.DataFrame({"nr_train_events": (nr_train_events / 2)}))
+        coverage = (
+            joined_data.nr_train_values_per_day - joined_data.nr_train_events
+        ) / joined_data.nr_train_values_per_day
+        series_ids_with_less_coverage = coverage.index[
+            coverage > (1.0 - minimum_coverage)
+        ]
+
+        if series_ids_with_less_coverage.shape[0]:
+            train_series = train_series[
+                (~train_series.series_id.isin(series_ids_with_less_coverage))
+            ].reset_index(drop=True)
+            train_events = train_events[
+                (~train_events.series_id.isin(series_ids_with_less_coverage))
+            ].reset_index(drop=True)
 
     # mappings storage
     mappings = {}
